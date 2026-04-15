@@ -1,0 +1,268 @@
+{
+	"name": "PL_COPY_DYNAMIC",
+	"properties": {
+		"activities": [
+			{
+				"name": "ForEach_Load_All_Tables",
+				"type": "ForEach",
+				"dependsOn": [],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@pipeline().parameters.table_list",
+						"type": "Expression"
+					},
+					"isSequential": true,
+					"activities": [
+						{
+							"name": "LookupWatermark",
+							"type": "Lookup",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "SqlServerSource",
+									"sqlReaderQuery": {
+										"value": "@concat(\n'SELECT COALESCE(MAX(Last_Watermark),''1900-01-01'') AS Last_Watermark ',\n'FROM dbo.Watermark_Table ',\n'WHERE Table_Name = ''',\nitem(),\n''''\n)",
+										"type": "Expression"
+									},
+									"queryTimeout": "02:00:00",
+									"partitionOption": "None"
+								},
+								"dataset": {
+									"referenceName": "DS_SQL_DYNAMIC",
+									"type": "DatasetReference",
+									"parameters": {
+										"table_name": {
+											"value": "@item()",
+											"type": "Expression"
+										}
+									}
+								}
+							}
+						},
+						{
+							"name": "If Condition",
+							"type": "IfCondition",
+							"dependsOn": [
+								{
+									"activity": "LookupMaxDate",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"userProperties": [],
+							"typeProperties": {
+								"expression": {
+									"value": "@or(\n    equals(\n        activity('LookupWatermark').output.firstRow.Last_Watermark,\n        '1900-01-01'\n    ),\n    greater(\n        ticks(activity('LookupMaxDate').output.firstRow.max_date),\n        ticks(activity('LookupWatermark').output.firstRow.Last_Watermark)\n    )\n)",
+									"type": "Expression"
+								},
+								"ifTrueActivities": [
+									{
+										"name": "update_watermark",
+										"type": "Script",
+										"dependsOn": [
+											{
+												"activity": "Copy_SQL_to_ADLS",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"linkedServiceName": {
+											"referenceName": "LS_SQLServer_Healthcare",
+											"type": "LinkedServiceReference"
+										},
+										"typeProperties": {
+											"scripts": [
+												{
+													"type": "Query",
+													"text": {
+														"value": "@concat(\n'UPDATE dbo.Watermark_Table SET Last_Watermark = ''',\nactivity('LookupMaxDate').output.firstRow.max_date,\n''' WHERE Table_Name = ''',\nitem(),\n''''\n)",
+														"type": "Expression"
+													}
+												}
+											],
+											"scriptBlockExecutionTimeout": "02:00:00"
+										}
+									},
+									{
+										"name": "Copy_SQL_to_ADLS",
+										"type": "Copy",
+										"dependsOn": [],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"source": {
+												"type": "SqlServerSource",
+												"sqlReaderQuery": {
+													"value": "@concat(\n'SELECT * FROM dbo.',\nitem(),\n' WHERE last_modified_date > ''',\nactivity('LookupWatermark').output.firstRow.Last_Watermark,\n''' AND last_modified_date IS NOT NULL'\n)",
+													"type": "Expression"
+												},
+												"queryTimeout": "02:00:00",
+												"partitionOption": "None"
+											},
+											"sink": {
+												"type": "ParquetSink",
+												"storeSettings": {
+													"type": "AzureBlobFSWriteSettings"
+												},
+												"formatSettings": {
+													"type": "ParquetWriteSettings"
+												}
+											},
+											"enableStaging": false,
+											"translator": {
+												"type": "TabularTranslator",
+												"typeConversion": true,
+												"typeConversionSettings": {
+													"allowDataTruncation": true,
+													"treatBooleanAsNumber": false
+												}
+											}
+										},
+										"inputs": [
+											{
+												"referenceName": "DS_SQL_DYNAMIC",
+												"type": "DatasetReference",
+												"parameters": {
+													"table_name": {
+														"value": "@item()",
+														"type": "Expression"
+													}
+												}
+											}
+										],
+										"outputs": [
+											{
+												"referenceName": "DS_ADLS_DYNAMIC",
+												"type": "DatasetReference",
+												"parameters": {
+													"table_name": {
+														"value": "@item()",
+														"type": "Expression"
+													}
+												}
+											}
+										]
+									},
+									{
+										"name": "set_row_count",
+										"type": "SetVariable",
+										"dependsOn": [
+											{
+												"activity": "update_watermark",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"variableName": "row_count",
+											"value": {
+												"value": "@activity('Copy_SQL_to_ADLS').output.rowsCopied",
+												"type": "Expression"
+											}
+										}
+									}
+								]
+							}
+						},
+						{
+							"name": "LookupMaxDate",
+							"type": "Lookup",
+							"dependsOn": [
+								{
+									"activity": "LookupWatermark",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "SqlServerSource",
+									"sqlReaderQuery": {
+										"value": "@concat(\n'SELECT ISNULL(MAX(last_modified_date), ''1900-01-01'') AS max_date ',\n'FROM dbo.',\nitem()\n)",
+										"type": "Expression"
+									},
+									"queryTimeout": "02:00:00",
+									"partitionOption": "None"
+								},
+								"dataset": {
+									"referenceName": "DS_SQL_DYNAMIC",
+									"type": "DatasetReference",
+									"parameters": {
+										"table_name": {
+											"value": "@item()",
+											"type": "Expression"
+										}
+									}
+								}
+							}
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"table_name": {
+				"type": "string"
+			},
+			"table_list": {
+				"type": "array",
+				"defaultValue": [
+					"claim_header",
+					"claim_line",
+					"member",
+					"payment",
+					"policy",
+					"provider"
+				]
+			}
+		},
+		"variables": {
+			"row_count": {
+				"type": "Integer"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-04-04T08:45:35Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

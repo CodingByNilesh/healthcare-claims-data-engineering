@@ -1,0 +1,9 @@
+{
+	"name": "adfnilproject",
+	"location": "centralindia",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "444d36ad-0498-48ee-b227-698852d6d94a",
+		"tenantId": "1446d4e8-2784-42f3-ab5e-4e70fddba7a2"
+	}
+}
